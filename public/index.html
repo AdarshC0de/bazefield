@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plant Data Portal</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{--bg:#f3f6f4;--ink:#16302b;--mute:#5f7570;--line:#d3ded9;--panel:#fff;--accent:#0d7a5f}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1b19;--ink:#e3efec;--mute:#8fa8a2;--line:#27403b;--panel:#16272440;--accent:#3fc9a2}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 "Segoe UI",system-ui,sans-serif}
+header{padding:20px 28px;border-bottom:1px solid var(--line)}
+h1{margin:0;font-size:22px;font-weight:600}
+main{display:grid;grid-template-columns:280px 1fr;gap:24px;padding:24px 28px}
+@media(max-width:820px){main{grid-template-columns:1fr}}
+aside{border-right:1px solid var(--line);padding-right:24px}
+@media(max-width:820px){aside{border:0;padding:0}}
+label{display:block;margin:12px 0 4px;color:var(--mute);font-size:13px}
+input,select{width:100%;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);font:inherit}
+.plant{display:flex;gap:8px;align-items:center;margin:6px 0}
+.plant input{width:auto}
+button{padding:9px 14px;border:0;border-radius:6px;background:var(--accent);color:#fff;font:inherit;cursor:pointer;margin:14px 8px 0 0}
+button.alt{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+button:disabled{opacity:.5;cursor:default}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.chart{height:380px;margin-bottom:20px}
+table{border-collapse:collapse;width:100%}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:right}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--mute);font-weight:500;font-size:13px}
+pre{white-space:pre-wrap;word-break:break-all;font-size:12px;max-height:300px;overflow:auto}
+details{margin-top:12px}
+#msg{color:var(--mute);margin:10px 0}
+.err{color:#c0392b}
+</style>
+</head>
+<body>
+<header><h1>Plant Data Portal</h1></header>
+<main>
+<aside>
+  <strong>Plants</strong>
+  <div class="plant"><input type="checkbox" id="all" checked><label for="all" style="margin:0;color:inherit">Select all</label></div>
+  <div id="plants"></div>
+  <label for="from">From</label><input type="date" id="from">
+  <label for="to">To</label><input type="date" id="to">
+  <label for="interval">Interval</label>
+  <select id="interval">
+    <option value="300">5 minutes</option><option value="900" selected>15 minutes</option>
+    <option value="3600">1 hour</option><option value="86400">1 day</option>
+  </select>
+  <label for="kind">Data</label>
+  <select id="kind"><option value="actual">Actual</option><option value="schedule">Schedule</option></select>
+  <label for="point">Point (blank = auto)</label><input id="point" list="pts" placeholder="auto"><datalist id="pts"></datalist>
+  <label for="agg">Aggregate</label>
+  <select id="agg">
+    <option>TIMEAVERAGE</option><option>AVERAGE</option><option>MAXIMUM</option><option>MINIMUM</option><option>TOTAL</option><option>END</option>
+  </select>
+  <button id="load">Load data</button><button id="export" class="alt" disabled>Export Excel</button>
+</aside>
+<section>
+  <div id="msg">Finding plants…</div>
+  <div class="chart"><canvas id="chart"></canvas></div>
+  <table id="summary"></table>
+  <div id="raw"></div>
+</section>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+const fmt = ms => new Date(ms).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
+const num = v => v == null ? '' : Number(v).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+let plants = [], data = {}, chart;
+
+const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+const yest = new Date(Date.now() - 864e5).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+$('#from').value = yest; $('#to').value = today;
+
+fetch('/api/plants').then(r => r.json()).then(async d => {
+  if (d.error) { $('#msg').className = 'err'; $('#msg').textContent = d.error; return; }
+  plants = d.plants;
+  if (!plants.length) { $('#msg').className = 'err'; $('#msg').textContent = 'No plants found.'; $('#raw').innerHTML = `<details open><summary>Raw /objects/structure response</summary><pre>${esc(JSON.stringify(d.raw, null, 1).slice(0, 4000))}</pre></details>`; return; }
+  const kind = c => c === 22 ? 'solar' : c === 21 ? 'wind' : c === 28 ? 'substation' : c === 2 ? 'fleet' : '';
+  $('#plants').innerHTML = plants.map(p => {
+    const on = ![2, 28].includes(p.category);
+    return `<div class="plant"><input type="checkbox" class="pc" id="p-${p.id}" value="${p.id}" ${on ? 'checked' : ''}><label for="p-${p.id}" style="margin:0;color:inherit">${esc(p.name)} <span style="color:var(--mute);font-size:12px">${kind(p.category)}</span></label></div>`;
+  }).join('');
+  document.querySelectorAll('.pc').forEach(c => c.onchange = syncAll);
+  syncAll();
+  $('#msg').textContent = `${plants.length} plants found automatically. Pick dates and load.`;
+  const first = plants.find(p => ![2, 28].includes(p.category)) || plants[0];
+  const pr = await (await fetch('/api/points?objectId=' + first.id)).json();
+  $('#pts').innerHTML = (pr.points || []).map(p => `<option value="${esc(p.schema)}">${esc(p.desc)}</option>`).join('');
+});
+function syncAll() { $('#all').checked = [...document.querySelectorAll('.pc')].every(x => x.checked); }
+$('#all').onchange = e => document.querySelectorAll('.pc').forEach(c => c.checked = e.target.checked);
+
+$('#load').onclick = async () => {
+  const ids = [...document.querySelectorAll('.pc:checked')].map(c => c.value);
+  if (!ids.length) { $('#msg').textContent = 'Select at least one plant.'; return; }
+  const from = new Date($('#from').value + 'T00:00:00+05:30').getTime();
+  const to = new Date($('#to').value + 'T23:59:59+05:30').getTime();
+  if (!(from < to)) { $('#msg').textContent = 'Choose a valid date range.'; return; }
+  $('#msg').className = ''; $('#msg').textContent = 'Loading…'; $('#load').disabled = true; $('#raw').innerHTML = '';
+  try {
+    const q = new URLSearchParams({ sites: ids.join(','), from, to, interval: $('#interval').value, aggregate: $('#agg').value, point: $('#point').value.trim(), kind: $('#kind').value });
+    data = await (await fetch('/api/data?' + q)).json();
+    render(ids);
+  } catch (e) { $('#msg').className = 'err'; $('#msg').textContent = e.message; }
+  $('#load').disabled = false;
+};
+
+function render(ids) {
+  const sel = ids.map(id => ({ ...plants.find(p => p.id === id), ...data[id] }));
+  const stamps = [...new Set(sel.flatMap(s => s.rows.map(r => r.ts)))].sort((a, b) => a - b);
+  const maps = Object.fromEntries(sel.map(s => [s.id, new Map(s.rows.map(r => [r.ts, r.value]))]));
+  const errs = sel.filter(s => s.error).map(s => `${s.name}: ${s.error}`);
+  $('#msg').className = errs.length ? 'err' : '';
+  $('#msg').textContent = errs.length ? errs.join(' | ') : `${stamps.length} time steps loaded.`;
+  $('#raw').innerHTML = sel.filter(s => s.raw || s.candidates?.length).map(s =>
+    `<details><summary>${esc(s.name)}: ${esc(s.point || '')}, candidate points / raw response</summary><pre>${esc((s.candidates || []).join('\n'))}${s.raw ? '\n\n' + esc(s.raw) : ''}</pre></details>`).join('');
+  if (chart) chart.destroy();
+  chart = new Chart($('#chart'), {
+    type: 'line',
+    data: { labels: stamps.map(fmt), datasets: sel.map(s => ({ label: s.name, data: stamps.map(t => maps[s.id].get(t) ?? null), pointRadius: 0, borderWidth: 1.5, spanGaps: true })) },
+    options: { maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, scales: { x: { ticks: { maxTicksLimit: 10 } } } }
+  });
+  const stats = sel.map(s => {
+    const v = s.rows.map(r => r.value).filter(x => x != null);
+    return { name: s.name, point: (s.point || '') + (s.unit ? ` [${s.unit}]` : ''), n: v.length, min: v.length ? Math.min(...v) : null, avg: v.length ? v.reduce((a, b) => a + b, 0) / v.length : null, max: v.length ? Math.max(...v) : null, last: v.at(-1) };
+  });
+  $('#summary').innerHTML = '<tr><th>Plant</th><th>Point</th><th>Points</th><th>Min</th><th>Average</th><th>Max</th><th>Latest</th></tr>' +
+    stats.map(s => `<tr><td>${esc(s.name)}</td><td>${esc(s.point)}</td><td>${s.n}</td><td>${num(s.min)}</td><td>${num(s.avg)}</td><td>${num(s.max)}</td><td>${num(s.last)}</td></tr>`).join('');
+  window._exp = { sel, stamps, maps, stats };
+  $('#export').disabled = !stamps.length;
+}
+
+$('#export').onclick = () => {
+  const { sel, stamps, maps, stats } = window._exp;
+  const wb = XLSX.utils.book_new();
+  const head = ['Timestamp (IST)', ...sel.map(s => `${s.name} (${s.point || ''}${s.unit ? ' ' + s.unit : ''})`)];
+  const rows = stamps.map(t => [fmt(t), ...sel.map(s => maps[s.id].get(t) ?? '')]);
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([head, ...rows]), 'Data');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Plant', 'Point', 'Points', 'Min', 'Average', 'Max', 'Latest'],
+    ...stats.map(s => [s.name, s.point, s.n, s.min, s.avg, s.max, s.last])]), 'Summary');
+  XLSX.writeFile(wb, `plant_data_${$('#kind').value}_${$('#from').value}_to_${$('#to').value}.xlsx`);
+};
+</script>
+</body>
+</html>

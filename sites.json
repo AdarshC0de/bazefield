@@ -1,0 +1,7 @@
+[
+  { "id": "113DB805EC4F4000", "name": "Bikaner Ph1 Solar", "tag": "SRI4PL-BZF-MTR_ActivePower" },
+  { "id": "122A9A3290CF4000", "name": "Bikaner Ph2 Solar", "tag": "SRI5PL-BZF-MTR_ActivePower" },
+  { "id": "126B08DBBD0F4000", "name": "Gadag Solar",       "tag": "SRI3PLS-ActivePowerMeter" },
+  { "id": "1157E17D83CF4000", "name": "Koppal Solar",      "tag": "SRIPL-BZF-ActivePower" },
+  { "id": "13C17D11E50F4000", "name": "Koppal Wind",       "tag": "SRI1PL-ActivePowerWTG" }
+]
